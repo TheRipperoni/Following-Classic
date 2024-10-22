@@ -1,0 +1,17 @@
+[package]
+name = "rsky-janitor"
+version = "0.1.0"
+authors = ["Rudy Fraser <him@rudyfraser.com>"]
+description = "A framework for building AT Protocol janitor generators, in Rust."
+license = "Apache-2.0"
+edition = "2021"
+publish = false
+homepage = "https://blackskyweb.xyz"
+repository = "https://github.com/blacksky-algorithms/rsky/tree/main/rsky-janitor"
+documentation = "https://docs.rs/rsky-janitor"
+
+[dependencies]
+dotenvy = "0.15"
+chrono = "0.4.26"
+cron = "0.12.1"
+postgres = "0.19.9"

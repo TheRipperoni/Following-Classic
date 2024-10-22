@@ -1,0 +1,25 @@
+/target/
+**/*.rs.bk
+Cargo.lock
+.openapi-generator-ignore
+.openapi-generator
+.DS_Store
+.cargo
+NOTE.md
+.graveyard/
+/labeler/*.json
+/labeler/*.tsv
+Rocket.toml
+*.pem
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+.env.prod
+.env*.bak
+/venv/
+rustc-*.txt
+/botenv/
