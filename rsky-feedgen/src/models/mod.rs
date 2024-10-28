@@ -35,6 +35,10 @@ pub use self::user_feed_preference::UserFeedPreference;
 pub mod create_user_config_request;
 pub mod following_preference;
 pub use self::following_preference::FollowingPreference;
+pub mod seen_post;
+pub use self::seen_post::SeenPost;
+pub mod fetched_post;
+pub use self::fetched_post::FetchedPost;
 
 pub use self::create_user_config_request::CreateUserConfigRequest;
 

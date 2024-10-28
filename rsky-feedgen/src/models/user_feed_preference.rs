@@ -1,6 +1,8 @@
 use diesel::prelude::*;
 
-#[derive(Queryable, Selectable, Clone, Debug, PartialEq, Default, Serialize, Deserialize, AsChangeset)]
+#[derive(
+    Queryable, Selectable, Clone, Debug, PartialEq, Default, Serialize, Deserialize, AsChangeset,
+)]
 #[diesel(table_name = crate::schema::user_feed_preference)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct UserFeedPreference {
@@ -16,4 +18,8 @@ pub struct UserFeedPreference {
     pub show_reposts: bool,
     #[serde(rename = "show_quote_posts")]
     pub show_quote_posts: bool,
+    #[serde(rename = "hide_seen_posts")]
+    pub hide_seen_posts: bool,
+    #[serde(rename = "hide_no_alt_text")]
+    pub hide_no_alt_text: bool,
 }

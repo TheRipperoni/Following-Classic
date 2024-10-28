@@ -3,7 +3,10 @@
 pub enum Lexicon {
     #[serde(rename(deserialize = "app.bsky.feed.post", serialize = "app.bsky.feed.post"))]
     AppBskyFeedPost(rsky_lexicon::app::bsky::feed::Post),
-    #[serde(rename(deserialize = "app.bsky.feed.repost", serialize = "app.bsky.feed.repost"))]
+    #[serde(rename(
+        deserialize = "app.bsky.feed.repost",
+        serialize = "app.bsky.feed.repost"
+    ))]
     AppBskyFeedRepost(rsky_lexicon::app::bsky::feed::Repost),
     #[serde(rename(deserialize = "app.bsky.feed.like", serialize = "app.bsky.feed.like"))]
     AppBskyFeedLike(rsky_lexicon::app::bsky::feed::like::Like),

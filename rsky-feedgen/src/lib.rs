@@ -16,9 +16,9 @@ pub struct WriteDbConn(PgConnection);
 #[database("pg_read_replica")]
 pub struct ReadReplicaConn(PgConnection);
 
+pub mod agent;
 pub mod apis;
 pub mod auth;
 pub mod db;
 pub mod models;
 pub mod schema;
-pub mod agent;

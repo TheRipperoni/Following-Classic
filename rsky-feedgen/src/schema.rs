@@ -45,6 +45,8 @@ diesel::table! {
         externalThumb -> Nullable<Varchar>,
         quoteCid -> Nullable<Varchar>,
         quoteUri -> Nullable<Varchar>,
+        media -> Bool,
+        alt -> Nullable<Varchar>
     }
 }
 
@@ -77,6 +79,8 @@ diesel::table! {
         reply_filter_followed_only -> Bool,
         show_reposts -> Bool,
         show_quote_posts -> Bool,
+        hide_seen_posts -> Bool,
+        hide_no_alt_text -> Bool,
     }
 }
 
@@ -86,6 +90,22 @@ diesel::table! {
         did -> Varchar,
         show_reposts -> Bool,
         show_quote_posts -> Bool,
+    }
+}
+
+diesel::table! {
+    fetched_post (did) {
+        id -> Int4,
+        did -> Varchar,
+        uri -> Varchar,
+    }
+}
+
+diesel::table! {
+    seen_post (did) {
+        id -> Int4,
+        did -> Varchar,
+        uri -> Varchar,
     }
 }
 
@@ -121,4 +141,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     video,
     visitor,
     following_preference,
+    fetched_post,
+    seen_post,
 );

@@ -1,6 +1,17 @@
 use diesel::prelude::*;
 
-#[derive(Queryable, Selectable, Clone, Debug, PartialEq, Default, Serialize, Deserialize, AsChangeset, Insertable)]
+#[derive(
+    Queryable,
+    Selectable,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    AsChangeset,
+    Insertable,
+)]
 #[diesel(table_name = crate::schema::following_preference)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct FollowingPreference {

@@ -3,19 +3,14 @@ use crate::db::*;
 use crate::models::post_result::PostResultReason;
 use crate::models::*;
 use crate::schema::follow::dsl as FollowSchema;
-use crate::schema::like::dsl as LikeSchema;
-use crate::schema::post::dsl as PostSchema;
-use crate::schema::repost::dsl as RepostSchema;
 use crate::schema::user_feed_preference::dsl as UserFeedSchema;
 use crate::schema::user_feed_preference::dsl::user_feed_preference;
 use crate::{ReadReplicaConn, WriteDbConn};
-use bsky_sdk::api::types::TryIntoUnknown;
 use chrono::offset::Utc as UtcOffset;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use diesel::sql_query;
 use rsky_lexicon::app::bsky::embed::Embeds;
-use serde::Deserializer;
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::time::SystemTime;
@@ -29,19 +24,284 @@ const DONT_SHOW_QUOTEPOSTS: &str =
 const NUMBER_OF_LIKES: &str =
     "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3l5fyvglu472z";
 const RESET_PREF: &str = "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3l5g74kd7my26";
-const USER_PREF_OPTIONS: [&str; 4] = [
+const HIDE_SEEN_POSTS: &str =
+    "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3l7edu2ufdp2u";
+const HIDE_NOT_ALT_TEXT_POSTS: &str = "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3lbsxswsgus2f";
+const USER_PREF_OPTIONS: [&str; 6] = [
     RESET_PREF,
     DONT_SHOW_QUOTEPOSTS,
     DONT_SHOW_REPOSTS,
     SHOW_REPLIES_FOR_FOLLOWING_ONLY,
+    HIDE_SEEN_POSTS,
+    HIDE_NOT_ALT_TEXT_POSTS
 ];
 
+fn update_seen_posts(did: &str, conn: &mut PgConnection) {
+    println!("Checking if seen posts should be updated");
+    let fetched_posts = get_fetched_posts(did, conn);
+    insert_seen_posts(fetched_posts.clone(), conn);
+
+    let mut uri_list: Vec<String> = Vec::new();
+    for fetched_post in fetched_posts {
+        uri_list.push(fetched_post.uri);
+    }
+
+    invalidate_fetched_posts(did, uri_list, conn);
+}
+
+fn post_media_query_str(
+    following: &str,
+) -> String {
+        format!(
+            "select uri,
+       \"indexedAt\",
+       cid,
+       \"replyParent\",
+       \"replyRoot\",
+       prev,
+       \"sequence\",
+       \"text\",
+       lang,
+       author,
+       \"externalUri\",
+       \"externalTitle\",
+       \"externalDescription\",
+       \"externalThumb\",
+       null as \"quoteCid\",
+       null as \"quoteUri\",
+       \"media\",
+\"alt\"
+from (select p1.uri,
+             p1.cid,
+             p1.\"replyParent\",
+             p1.\"replyRoot\",
+             p1.prev,
+             p1.\"sequence\",
+             p1.\"text\",
+             p1.lang,
+             p1.author,
+             p1.\"externalUri\",
+             p1.\"externalTitle\",
+             p1.\"externalDescription\",
+             p1.\"externalThumb\",
+             p1.\"quoteCid\",
+             p1.\"quoteUri\",
+             p1.\"indexedAt\",
+p1.\"media\",
+p1.\"alt\"
+      from post p1
+      where p1.author in ({authors})
+        and (p1.media is true)
+      group by p1.uri, p1.cid, p1.author) as x
+where true=true",
+            authors = following,
+        )
+}
+
+fn post_query_str(
+    hide_seen_posts: bool,
+    hide_no_alt_text: bool,
+    following: &str,
+    user_config: &UserFeedPreference,
+    did: &str,
+) -> String {
+    if hide_seen_posts {
+        format!(
+            "select uri,
+       \"indexedAt\",
+       cid,
+       \"replyParent\",
+       \"replyRoot\",
+       prev,
+       \"sequence\",
+       \"text\",
+       lang,
+       author,
+       \"externalUri\",
+       \"externalTitle\",
+       \"externalDescription\",
+       \"externalThumb\",
+       null as \"quoteCid\",
+       null as \"quoteUri\",
+       \"media\",
+\"alt\"
+from (select p1.uri,
+             p1.cid,
+             p1.\"replyParent\",
+             p1.\"replyRoot\",
+             p1.prev,
+             p1.\"sequence\",
+             p1.\"text\",
+             p1.lang,
+             p1.author,
+             p1.\"externalUri\",
+             p1.\"externalTitle\",
+             p1.\"externalDescription\",
+             p1.\"externalThumb\",
+             p1.\"quoteCid\",
+             p1.\"quoteUri\",
+             (select count(*) from public.like m where p1.uri = m.\"subjectUri\") as likeCount,
+             p1.\"indexedAt\",
+p1.\"media\",
+p1.\"alt\"
+      from post p1
+               left join post p2
+                         on p1.\"replyParent\" = p2.uri
+               LEFT OUTER JOIN seen_post s1 ON s1.did = '{did}' and s1.uri = p1.uri
+      where p1.author in ({authors})
+        and ({quotes_included} or p1.\"quoteUri\" is null)
+        and ({hide_no_alt_text}=false or p1.\"media\" is false or p1.\"alt\" is not null)
+        and ({replies_included} or p1.\"replyParent\" is null)
+        and s1.id is null
+        and ({all_replies} or p2.author is null or (p2.author in ({authors})))
+      group by p1.uri, p1.cid, p1.author) as x
+where (\"replyParent\" is null or likeCount >= {like_threshold})",
+            authors = following,
+            quotes_included = user_config.show_quote_posts,
+            replies_included = user_config.show_replies,
+            all_replies = !user_config.reply_filter_followed_only,
+            like_threshold = user_config.reply_filter_likes,
+            did = did
+        )
+    } else {
+        format!(
+            "select uri,
+       \"indexedAt\",
+       cid,
+       \"replyParent\",
+       \"replyRoot\",
+       prev,
+       \"sequence\",
+       \"text\",
+       lang,
+       author,
+       \"externalUri\",
+       \"externalTitle\",
+       \"externalDescription\",
+       \"externalThumb\",
+       null as \"quoteCid\",
+       null as \"quoteUri\",
+        \"media\",
+        alt
+from (select p1.uri,
+             p1.cid,
+             p1.\"replyParent\",
+             p1.\"replyRoot\",
+             p1.prev,
+             p1.\"sequence\",
+             p1.\"text\",
+             p1.lang,
+             p1.author,
+             p1.\"externalUri\",
+             p1.\"externalTitle\",
+             p1.\"externalDescription\",
+             p1.\"externalThumb\",
+             p1.\"quoteCid\",
+             p1.\"quoteUri\",
+             (select count(*) from public.like m where p1.uri = m.\"subjectUri\") as likeCount,
+             p1.\"indexedAt\",
+            p1.\"media\",
+p1.\"alt\"
+      from post p1
+               left join post p2
+                         on p1.\"replyParent\" = p2.uri
+      where p1.author in ({authors})
+        and ({quotes_included} or p1.\"quoteUri\" is null)
+        and ({hide_no_alt_text}=false or p1.\"media\" is false or p1.\"alt\" is not null)
+        and ({replies_included} or p1.\"replyParent\" is null)
+        and ({all_replies} or p2.author is null or (p2.author in ({authors})))
+      group by p1.uri, p1.cid, p1.author) as x
+where (\"replyParent\" is null or likeCount >= {like_threshold})",
+            authors = following,
+            quotes_included = user_config.show_quote_posts,
+            replies_included = user_config.show_replies,
+            all_replies = !user_config.reply_filter_followed_only,
+            like_threshold = user_config.reply_filter_likes
+        )
+    }
+}
+
+
+
+fn repost_query_str(hide_seen_posts: bool, following_reposts_string: &str, did: &str) -> String {
+    if hide_seen_posts {
+        format!(
+            "select uri,
+       \"indexedAt\",
+       cid,
+       null   as \"replyParent\",
+       null   as \"replyRoot\",
+       prev,
+       \"sequence\",
+       null   as \"text\",
+       null   as lang,
+       author as author,
+       null   as \"externalUri\",
+       null   as \"externalTitle\",
+       null   as \"externalDescription\",
+       null   as \"externalThumb\",
+       \"subjectCid\"   as \"quoteCid\",
+       \"subjectUri\"   as \"quoteUri\",
+false   as \"media\",
+null as alt
+from (select r1.uri as uri,
+             r1.cid as cid,
+             r1.\"subjectUri\" as \"subjectUri\",
+             r1.\"subjectCid\" as \"subjectCid\",
+             r1.author,
+             r1.\"indexedAt\",
+             r1.prev,
+             r1.\"sequence\"
+      from repost r1
+          LEFT OUTER JOIN seen_post s1 ON s1.did = '{did}' and s1.uri = r1.uri
+      where r1.author in ({authors}) and s1.id is null) as x",
+            authors = following_reposts_string,
+            did = did.clone()
+        )
+    } else {
+        format!(
+            "select uri,
+       \"indexedAt\",
+       cid,
+       null   as \"replyParent\",
+       null   as \"replyRoot\",
+       prev,
+       \"sequence\",
+       null   as \"text\",
+       null   as lang,
+       author as author,
+       null   as \"externalUri\",
+       null   as \"externalTitle\",
+       null   as \"externalDescription\",
+       null   as \"externalThumb\",
+       \"subjectCid\"   as \"quoteCid\",
+       \"subjectUri\"   as \"quoteUri\",
+false   as \"media\",
+null as alt
+from (select r1.uri as uri,
+             r1.cid as cid,
+             r1.\"subjectUri\" as \"subjectUri\",
+             r1.\"subjectCid\" as \"subjectCid\",
+             r1.author,
+             r1.\"indexedAt\",
+             r1.prev,
+             r1.\"sequence\"
+      from repost r1
+      where r1.author in ({authors})
+      ) as x",
+            authors = following_reposts_string
+        )
+    }
+}
+
+#[tracing::instrument(skip(connection))]
 pub async fn get_posts_by_user_feed(
     did: String,
-    limit: Option<i64>,
+    _limit: Option<i64>,
     params_cursor: Option<&str>,
     connection: ReadReplicaConn,
 ) -> Result<AlgoResponse, ValidationErrorMessageResponse> {
+    let limit: i64 = _limit.unwrap_or(30);
     let params_cursor = match params_cursor {
         None => None,
         Some(params_cursor) => Some(params_cursor.to_string()),
@@ -50,10 +310,10 @@ pub async fn get_posts_by_user_feed(
 
     let mut follow_dids = get_saved_follows(did.clone(), &connection).await;
     if follow_dids.len() == 0 {
-        eprintln!("Creating followers for {}", did);
+        tracing::info!("Creating followers for {}", did);
         let agent = get_agent().await.unwrap();
         let follows = get_follows(&agent, did.clone().as_ref()).await;
-        let result = connection
+        connection
             .run(move |conn| {
                 insert_follows(follows, conn);
             })
@@ -80,12 +340,26 @@ pub async fn get_posts_by_user_feed(
                 None => UserFeedPreference {
                     did: did.clone().to_string(),
                     show_replies: true,
-                    reply_filter_likes: 2,
+                    reply_filter_likes: 0,
                     reply_filter_followed_only: false,
                     show_reposts: true,
                     show_quote_posts: true,
+                    hide_seen_posts: false,
+                    hide_no_alt_text: false,
                 },
             };
+
+            if user_config.hide_seen_posts && limit != 1 {
+                match params_cursor {
+                    None => invalidate_all_fetched_posts(did.as_str(), conn),
+                    Some(_) => {
+                        if get_total_fetches(did.as_str(), conn) >= 60 {
+                            update_seen_posts(did.as_str(), conn)
+                        }
+                    }
+                }
+            }
+
             let following_preferences = get_following_preferences2(did.clone(), conn);
             let mut following_reposts: HashSet<String> = follow_dids.iter().cloned().collect();
             let mut following_reposts_string = String::from("");
@@ -95,88 +369,22 @@ pub async fn get_posts_by_user_feed(
                 }
             }
             for following_pref_did in following_reposts.iter() {
-                following_reposts_string += ("\'".to_string() + following_pref_did.as_str() + "\',").as_str();
+                following_reposts_string +=
+                    ("\'".to_string() + following_pref_did.as_str() + "\',").as_str();
             }
             following_reposts_string.pop();
-            let mut query_str = format!(
-                "select uri,
-       \"indexedAt\",
-       cid,
-       \"replyParent\",
-       \"replyRoot\",
-       prev,
-       \"sequence\",
-       \"text\",
-       lang,
-       author,
-       \"externalUri\",
-       \"externalTitle\",
-       \"externalDescription\",
-       \"externalThumb\",
-       null as \"quoteCid\",
-       null as \"quoteUri\"
-from (select p1.uri,
-             p1.cid,
-             p1.\"replyParent\",
-             p1.\"replyRoot\",
-             p1.prev,
-             p1.\"sequence\",
-             p1.\"text\",
-             p1.lang,
-             p1.author,
-             p1.\"externalUri\",
-             p1.\"externalTitle\",
-             p1.\"externalDescription\",
-             p1.\"externalThumb\",
-             p1.\"quoteCid\",
-             p1.\"quoteUri\",
-             (select count(*) from public.like m where p1.uri = m.\"subjectUri\") as likeCount,
-             p1.\"indexedAt\"
-      from post p1
-               left join post p2
-                         on p1.\"replyParent\" = p2.uri
-      where p1.author in ({authors})
-        and ({quotes_included} or p1.\"quoteUri\" is null)
-        and ({replies_included} or p1.\"replyParent\" is null)
-        and ({all_replies} or p2.author is null or (p2.author in ({authors})))
-      group by p1.uri, p1.cid, p1.author) as x
-where (\"replyParent\" is null or likeCount >= {like_threshold})",
-                authors = following,
-                quotes_included = user_config.show_quote_posts,
-                replies_included = user_config.show_replies,
-                all_replies = !user_config.reply_filter_followed_only,
-                like_threshold = user_config.reply_filter_likes
-            );
 
-            let mut repost_query_str = format!(
-                "select uri,
-       \"indexedAt\",
-       cid,
-       null   as \"replyParent\",
-       null   as \"replyRoot\",
-       prev,
-       \"sequence\",
-       null   as \"text\",
-       null   as lang,
-       author as author,
-       null   as \"externalUri\",
-       null   as \"externalTitle\",
-       null   as \"externalDescription\",
-       null   as \"externalThumb\",
-       \"subjectCid\"   as \"quoteCid\",
-       \"subjectUri\"   as \"quoteUri\"
-from (select r1.uri as uri,
-             r1.cid as cid,
-             r1.\"subjectUri\" as \"subjectUri\",
-             r1.\"subjectCid\" as \"subjectCid\",
-             r1.author,
-             r1.\"indexedAt\",
-             r1.prev,
-             r1.\"sequence\"
-      from repost r1
-      where r1.author in ({authors})
-      ) as x",
-                authors = following_reposts_string
+            let mut query_str: String = post_query_str(
+                user_config.hide_seen_posts,
+                user_config.hide_no_alt_text,
+                following.as_str(),
+                &user_config,
+                did.as_str(),
+            );
+            let mut repost_query_str: String = repost_query_str(
+                user_config.hide_seen_posts,
+                following_reposts_string.as_str(),
+                did.as_str(),
             );
 
             if params_cursor.is_some() {
@@ -204,7 +412,7 @@ from (select r1.uri as uri,
                                 repost_query_str =
                                     format!("{}{}", repost_query_str, cursor_repost_filter_str);
                             }
-                            Err(error) => eprintln!("Error formatting: {error:?}"),
+                            Err(error) => tracing::error!("Error formatting: {error:?}"),
                         }
                     }
                 } else {
@@ -215,10 +423,7 @@ from (select r1.uri as uri,
                     return Err(validation_error);
                 }
             }
-            let order_str = format!(
-                " ORDER BY \"indexedAt\" DESC, cid DESC LIMIT {} ",
-                limit.unwrap_or(30)
-            );
+            let order_str = format!(" ORDER BY \"indexedAt\" DESC, cid DESC LIMIT {} ", limit);
             let query_str = format!("{}{};", &query_str, &order_str);
             let repost_query_str = format!("{}{};", &repost_query_str, &order_str);
 
@@ -242,7 +447,7 @@ from (select r1.uri as uri,
                 });
             }
 
-            let mut slice_size = limit.unwrap_or(30) as usize;
+            let mut slice_size = limit as usize;
             if results.len() < 30 {
                 slice_size = results.len();
             }
@@ -267,6 +472,151 @@ from (select r1.uri as uri,
             }
 
             final_result
+                .clone()
+                .into_iter()
+                .map(|result| {
+                    let post_result;
+                    if result.quote_uri.is_some() {
+                        let reason = PostResultReason {
+                            reason_type: "app.bsky.feed.defs#skeletonReasonRepost".to_string(),
+                            repost_uri: result.uri,
+                        };
+                        post_result = PostResult {
+                            post: result.quote_uri.unwrap(),
+                            reason: Some(reason),
+                        };
+                    } else {
+                        post_result = PostResult {
+                            post: result.uri,
+                            reason: None,
+                        };
+                    }
+                    post_results.push(post_result);
+                })
+                .for_each(drop);
+
+            if user_config.hide_seen_posts && limit != 1 {
+                let mut fetched_posts: Vec<FetchedPost> = Vec::new();
+                for post_result in final_result.clone() {
+                    let fetched_post = FetchedPost {
+                        did: did.clone(),
+                        uri: post_result.uri,
+                    };
+                    fetched_posts.push(fetched_post);
+                }
+                insert_fetched_posts(fetched_posts, conn);
+            }
+
+            let new_response = AlgoResponse {
+                cursor,
+                feed: post_results,
+            };
+            Ok(new_response)
+        })
+        .await;
+    result
+}
+
+#[tracing::instrument(skip(connection))]
+pub async fn get_posts_by_following_media(
+    did: String,
+    _limit: Option<i64>,
+    params_cursor: Option<&str>,
+    connection: ReadReplicaConn,
+) -> Result<AlgoResponse, ValidationErrorMessageResponse> {
+    let limit: i64 = _limit.unwrap_or(30);
+    let params_cursor = match params_cursor {
+        None => None,
+        Some(params_cursor) => Some(params_cursor.to_string()),
+    };
+    let mut following = String::from("");
+
+    let mut follow_dids = get_saved_follows(did.clone(), &connection).await;
+    if follow_dids.len() == 0 {
+        tracing::info!("Creating followers for {}", did);
+        let agent = get_agent().await.unwrap();
+        let follows = get_follows(&agent, did.clone().as_ref()).await;
+        connection
+            .run(move |conn| {
+                insert_follows(follows, conn);
+            })
+            .await;
+        follow_dids = get_saved_follows(did.clone(), &connection).await;
+    }
+
+    if follow_dids.len() == 0 {
+        return Ok(AlgoResponse {
+            cursor: None,
+            feed: Vec::new(),
+        });
+    }
+
+    for follow_did in follow_dids.iter() {
+        following += ("\'".to_string() + follow_did.as_str() + "\',").as_str();
+    }
+    following.pop();
+
+    let result = connection
+        .run(move |conn| {
+            let mut query_str: String = post_media_query_str(
+                following.as_str(),
+            );
+
+            if params_cursor.is_some() {
+                let cursor_str = params_cursor.unwrap();
+                let v = cursor_str
+                    .split("::")
+                    .take(2)
+                    .map(String::from)
+                    .collect::<Vec<_>>();
+                if let [indexed_at_c, _cid_c] = &v[..] {
+                    if let Ok(timestamp) = indexed_at_c.parse::<i64>() {
+                        let nanoseconds = 230 * 1000000;
+                        let datetime = DateTime::<Utc>::from_utc(
+                            NaiveDateTime::from_timestamp(timestamp / 1000, nanoseconds),
+                            Utc,
+                        );
+                        let mut timestr = String::new();
+                        match write!(timestr, "{}", datetime.format("%+")) {
+                            Ok(_) => {
+                                let cursor_filter_str =
+                                    format!(" AND (\"indexedAt\" < '{0}')", timestr.to_owned());
+                                query_str = format!("{}{}", query_str, cursor_filter_str);
+                            }
+                            Err(error) => tracing::error!("Error formatting: {error:?}"),
+                        }
+                    }
+                } else {
+                    let validation_error = ValidationErrorMessageResponse {
+                        code: Some(ErrorCode::ValidationError),
+                        message: Some("malformed cursor".into()),
+                    };
+                    return Err(validation_error);
+                }
+            }
+            let order_str = format!(" ORDER BY \"indexedAt\" DESC, cid DESC LIMIT {} ", limit);
+            let query_str = format!("{}{};", &query_str, &order_str);
+
+            let mut results = sql_query(query_str)
+                .load::<crate::models::Post>(conn)
+                .expect("Error loading post records");
+
+            let mut post_results = Vec::new();
+            let mut cursor: Option<String> = None;
+
+            if let Some(last_post) = results.last() {
+                if let Ok(parsed_time) = NaiveDateTime::parse_from_str(&last_post.indexed_at, "%+")
+                {
+                    cursor = Some(format!(
+                        "{}::{}",
+                        parsed_time.timestamp_millis(),
+                        last_post.cid
+                    ));
+                }
+            }
+
+            results
+                .clone()
                 .into_iter()
                 .map(|result| {
                     let post_result;
@@ -296,7 +646,6 @@ from (select r1.uri as uri,
             Ok(new_response)
         })
         .await;
-
     result
 }
 
@@ -311,6 +660,8 @@ fn queue_post_creation(body: Vec<CreateRequest>, conn: &mut PgConnection) {
             let system_time = SystemTime::now();
             let dt: DateTime<UtcOffset> = system_time.into();
             let mut post_text_original = String::new();
+            let mut post_media_original = false;
+            let mut post_alt_original = None;
             let mut new_post = Post {
                 uri: req.uri,
                 cid: req.cid,
@@ -328,6 +679,8 @@ fn queue_post_creation(body: Vec<CreateRequest>, conn: &mut PgConnection) {
                 external_thumb: None,
                 quote_cid: None,
                 quote_uri: None,
+                media: false,
+                alt: None,
             };
 
             if let Lexicon::AppBskyFeedPost(post_record) = req.record {
@@ -341,9 +694,19 @@ fn queue_post_creation(body: Vec<CreateRequest>, conn: &mut PgConnection) {
                 }
                 if let Some(embed) = post_record.embed {
                     match embed {
-                        Embeds::Images(_e) => {}
-                        Embeds::Video(ref _e) => {}
-                        Embeds::RecordWithMedia(_e) => {}
+                        Embeds::Images(e) => {
+                            post_media_original = true;
+                            for image in e.images {
+                                if image.alt != "" {
+                                    post_alt_original = Some(image.alt);
+                                }
+                            }
+                        }
+                        Embeds::Video(e) => {
+                            post_media_original = true;
+                            post_alt_original =  e.alt;
+                        }
+                        Embeds::RecordWithMedia(e) => {}
                         Embeds::External(e) => {
                             new_post.external_uri = Some(e.external.uri);
                             new_post.external_title = Some(e.external.title);
@@ -363,6 +726,8 @@ fn queue_post_creation(body: Vec<CreateRequest>, conn: &mut PgConnection) {
             }
 
             new_post.text = Some(post_text_original);
+            new_post.media = post_media_original;
+            new_post.alt = post_alt_original;
 
             match new_post.reply_parent {
                 None => {}
@@ -432,6 +797,8 @@ fn queue_post_creation(body: Vec<CreateRequest>, conn: &mut PgConnection) {
                 PostSchema::externalThumb.eq(new_post.external_thumb),
                 PostSchema::quoteCid.eq(new_post.quote_cid),
                 PostSchema::quoteUri.eq(new_post.quote_uri),
+                PostSchema::media.eq(new_post.media),
+                PostSchema::alt.eq(new_post.alt),
             );
             new_posts.push(new_post);
         })
@@ -534,6 +901,20 @@ fn queue_like_creation(body: Vec<CreateRequest>, conn: &mut PgConnection) {
                                     .execute(conn)
                                     .expect("Error update config records");
                             }
+                            HIDE_SEEN_POSTS => {
+                                diesel::update(user_feed_preference)
+                                    .filter(UserFeedSchema::did.eq(user_pref.did.clone()))
+                                    .set((UserFeedSchema::hide_seen_posts.eq(true),))
+                                    .execute(conn)
+                                    .expect("Error update config records");
+                            }
+                            HIDE_NOT_ALT_TEXT_POSTS => {
+                                diesel::update(user_feed_preference)
+                                    .filter(UserFeedSchema::did.eq(user_pref.did.clone()))
+                                    .set((UserFeedSchema::hide_no_alt_text.eq(true),))
+                                    .execute(conn)
+                                    .expect("Error update config records");
+                            }
                             _ => {}
                         },
                     }
@@ -627,6 +1008,7 @@ pub async fn queue_creation(
     result
 }
 
+#[tracing::instrument(skip(connection))]
 pub async fn queue_deletion(
     lex: String,
     body: Vec<DeleteRequest>,
@@ -649,7 +1031,7 @@ pub async fn queue_deletion(
             } else if lex == "follows" {
                 delete_follows_by_uri(delete_rows, conn);
             } else {
-                eprintln!("Unknown lexicon received {lex:?}");
+                tracing::error!("Unknown lexicon received {lex:?}");
             }
             Ok(())
         })

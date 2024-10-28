@@ -44,6 +44,10 @@ pub struct Post {
     pub quote_cid: Option<String>,
     #[serde(rename = "quoteUri", skip_serializing_if = "Option::is_none")]
     pub quote_uri: Option<String>,
+    #[serde(rename = "media")]
+    pub media: bool,
+    #[serde(rename = "alt", skip_serializing_if = "Option::is_none")]
+    pub alt: Option<String>,
 }
 
 impl Queryable<post::SqlType, DB> for Post {
@@ -63,6 +67,8 @@ impl Queryable<post::SqlType, DB> for Post {
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
+        bool,
         Option<String>,
     );
 
@@ -84,6 +90,8 @@ impl Queryable<post::SqlType, DB> for Post {
             external_thumb: row.13,
             quote_cid: row.14,
             quote_uri: row.15,
+            media: row.16,
+            alt: row.17,
         })
     }
 }
@@ -109,6 +117,8 @@ where
         post::externalThumb,
         post::quoteCid,
         post::quoteUri,
+        post::media,
+        post::alt,
     );
 
     fn construct_selection() -> Self::SelectExpression {
@@ -129,6 +139,8 @@ where
             post::externalThumb,
             post::quoteCid,
             post::quoteUri,
+            post::media,
+            post::alt,
         )
     }
 }
@@ -139,6 +151,7 @@ where
     String: FromSql<diesel::dsl::SqlTypeOf<post::uri>, DB>,
     Option<String>: FromSql<diesel::dsl::SqlTypeOf<post::replyParent>, DB>,
     Option<i64>: FromSql<diesel::dsl::SqlTypeOf<post::sequence>, DB>,
+    bool: FromSql<diesel::sql_types::Bool, DB>
 {
     fn build<'a>(row: &impl NamedRow<'a, DB>) -> deserialize::Result<Self> {
         let uri = NamedRow::get::<diesel::dsl::SqlTypeOf<post::uri>, _>(row, "uri")?;
@@ -169,6 +182,10 @@ where
             NamedRow::get::<diesel::dsl::SqlTypeOf<post::quoteCid>, _>(row, "quoteCid")?;
         let quote_uri =
             NamedRow::get::<diesel::dsl::SqlTypeOf<post::quoteUri>, _>(row, "quoteUri")?;
+        let media =
+            NamedRow::get::<diesel::dsl::SqlTypeOf<post::media>, _>(row, "media")?;
+        let alt =
+            NamedRow::get::<diesel::dsl::SqlTypeOf<post::alt>, _>(row, "alt")?;
         Ok(Self {
             uri,
             cid,
@@ -186,6 +203,8 @@ where
             external_thumb,
             quote_cid,
             quote_uri,
+            media,
+            alt,
         })
     }
 }

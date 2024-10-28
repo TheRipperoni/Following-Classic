@@ -24,6 +24,7 @@ COPY rsky-lexicon rsky-lexicon
 COPY rsky-identity rsky-identity
 COPY rsky-syntax rsky-syntax
 COPY rsky-janitor rsky-janitor
+COPY rsky-jetstream rsky-jetstream
 COPY rsky-feedgen/Cargo.toml rsky-feedgen/Cargo.toml
 COPY rsky-crypto rsky-crypto
 COPY rsky-firehose rsky-firehose

@@ -11,6 +11,8 @@ repository = "https://github.com/blacksky-algorithms/rsky/tree/main/rsky-feedgen
 documentation = "https://docs.rs/rsky-feedgen"
 
 [dependencies]
+tracing = "0.1"
+tracing-subscriber = "0.3"
 rsky-lexicon = { workspace = true }
 rocket = { version = "=0.5.1", features = ["json"] }
 serde = { version = "1.0.160", features = ["derive"] }

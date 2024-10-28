@@ -64,7 +64,6 @@ where
         follow::indexedAt,
         follow::prev,
         follow::sequence,
-
     );
 
     fn construct_selection() -> Self::SelectExpression {

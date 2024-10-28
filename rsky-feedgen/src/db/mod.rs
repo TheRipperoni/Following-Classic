@@ -1,19 +1,21 @@
+use crate::models::{FetchedPost, Follow, FollowingPreference, UserFeedPreference};
+use crate::{ReadReplicaConn, WriteDbConn};
+use diesel::dsl::count;
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use dotenvy::dotenv;
 use std::env;
-use crate::models::{Follow, FollowingPreference, UserFeedPreference};
-use crate::{ReadReplicaConn, WriteDbConn};
+
 use crate::schema::following_preference::dsl::following_preference;
-use crate::schema::sub_state::{cursor, service};
 use crate::schema::user_feed_preference::dsl::user_feed_preference;
 
+#[tracing::instrument]
 pub fn establish_connection() -> Result<PgConnection, Box<dyn std::error::Error>> {
     dotenv().ok();
 
     let database_url = env::var("DATABASE_URL").unwrap_or("".into());
     let result = PgConnection::establish(&database_url).map_err(|_| {
-        eprintln!("Error connecting to {database_url:?}");
+        tracing::error!("Error connecting to {database_url:?}");
         "Internal error"
     })?;
 
@@ -35,6 +37,95 @@ pub fn get_user_config(_did: &str, conn: &mut PgConnection) -> Option<UserFeedPr
     } else {
         None
     }
+}
+
+pub fn get_fetched_posts(_did: &str, conn: &mut PgConnection) -> Vec<FetchedPost> {
+    use crate::schema::fetched_post::dsl::*;
+
+    let result = fetched_post
+        .filter(did.eq(_did))
+        .select(FetchedPost::as_select())
+        .limit(30)
+        .load(conn)
+        .expect("Error querying user feed");
+    result
+}
+
+pub fn get_total_fetches(_did: &str, conn: &mut PgConnection) -> i64 {
+    use crate::schema::fetched_post::dsl::*;
+
+    let result: i64 = fetched_post
+        .filter(did.eq(_did))
+        .select(count(uri))
+        .first(conn)
+        .unwrap();
+
+    result
+}
+
+pub fn invalidate_all_fetched_posts(_did: &str, conn: &mut PgConnection) {
+    use crate::schema::fetched_post::did;
+    use crate::schema::fetched_post::dsl::fetched_post;
+
+    match diesel::delete(fetched_post.filter(did.eq(_did))).execute(conn) {
+        Ok(count) => {}
+        Err(e) => {
+            tracing::error!("{}", e.to_string())
+        }
+    }
+}
+
+pub fn invalidate_fetched_posts(_did: &str, uri_list: Vec<String>, conn: &mut PgConnection) {
+    use crate::schema::fetched_post::did;
+    use crate::schema::fetched_post::dsl::fetched_post;
+    use crate::schema::fetched_post::uri;
+
+    match diesel::delete(
+        fetched_post
+            .filter(did.eq(_did))
+            .filter(uri.eq_any(uri_list)),
+    )
+    .execute(conn)
+    {
+        Ok(count) => {}
+        Err(e) => {
+            tracing::error!("{}", e.to_string())
+        }
+    }
+}
+
+pub fn insert_fetched_posts(fetched_posts: Vec<FetchedPost>, conn: &mut PgConnection) {
+    use crate::schema::fetched_post::dsl as FetchedPostSchema;
+    let mut fetched_posts_to_insert = Vec::new();
+    for fetched_post in fetched_posts.iter() {
+        let new_seen_post = (
+            FetchedPostSchema::did.eq(fetched_post.did.clone()),
+            FetchedPostSchema::uri.eq(fetched_post.uri.clone()),
+        );
+        fetched_posts_to_insert.push(new_seen_post);
+    }
+
+    diesel::insert_into(crate::schema::fetched_post::dsl::fetched_post)
+        .values(&fetched_posts_to_insert)
+        .execute(conn)
+        .expect("Error inserting fetched_post records");
+}
+
+pub fn insert_seen_posts(fetched_posts: Vec<FetchedPost>, conn: &mut PgConnection) {
+    use crate::schema::seen_post::dsl as SeenPostSchema;
+    let mut seen_posts_to_insert = Vec::new();
+    for fetched_post in fetched_posts.iter() {
+        let new_seen_post = (
+            SeenPostSchema::did.eq(fetched_post.did.clone()),
+            SeenPostSchema::uri.eq(fetched_post.uri.clone()),
+        );
+        seen_posts_to_insert.push(new_seen_post);
+    }
+
+    diesel::insert_into(crate::schema::seen_post::dsl::seen_post)
+        .values(&seen_posts_to_insert)
+        .execute(conn)
+        .expect("Error inserting seen_post records");
 }
 
 pub async fn get_saved_follows(did: String, connection: &ReadReplicaConn) -> Vec<String> {
@@ -123,9 +214,10 @@ pub fn get_following_preferences2(
     _did: String,
     conn: &mut PgConnection,
 ) -> Vec<FollowingPreference> {
-    use crate::schema::following_preference::dsl::following_preference as FollowingPrefSchema;
     use crate::schema::following_preference::dsl::author;
-    FollowingPrefSchema.filter(author.eq(_did))
+    use crate::schema::following_preference::dsl::following_preference as FollowingPrefSchema;
+    FollowingPrefSchema
+        .filter(author.eq(_did))
         .select(FollowingPreference::as_select())
         .load(conn)
         .unwrap()
@@ -135,12 +227,13 @@ pub async fn following_pref_fetch(
     _did: String,
     connection: WriteDbConn,
 ) -> Vec<FollowingPreference> {
-    use crate::schema::following_preference::dsl::following_preference as FollowingPrefSchema;
     use crate::schema::following_preference::dsl::author;
+    use crate::schema::following_preference::dsl::following_preference as FollowingPrefSchema;
 
     let result = connection
         .run(move |conn| {
-            FollowingPrefSchema.filter(author.eq(_did))
+            FollowingPrefSchema
+                .filter(author.eq(_did))
                 .select(FollowingPreference::as_select())
                 .load(conn)
                 .unwrap()
@@ -169,17 +262,14 @@ pub async fn following_pref_update(
     Ok(result)
 }
 
-
-pub async fn user_config_fetch(
-    _did: String,
-    connection: WriteDbConn,
-) -> Vec<UserFeedPreference> {
-    use crate::schema::user_feed_preference::dsl::user_feed_preference as UserFeedSchema;
+pub async fn user_config_fetch(_did: String, connection: WriteDbConn) -> Vec<UserFeedPreference> {
     use crate::schema::user_feed_preference::dsl::did;
+    use crate::schema::user_feed_preference::dsl::user_feed_preference as UserFeedSchema;
 
     let result = connection
         .run(move |conn| {
-            UserFeedSchema.filter(did.eq(_did))
+            UserFeedSchema
+                .filter(did.eq(_did))
                 .select(UserFeedPreference::as_select())
                 .load(conn)
                 .unwrap()
@@ -229,27 +319,45 @@ pub fn insert_follows(follows: Vec<Follow>, conn: &mut PgConnection) {
 }
 
 pub fn delete_posts_by_uri(delete_rows: Vec<String>, conn: &mut PgConnection) {
-    diesel::delete(crate::schema::post::dsl::post.filter(crate::schema::post::dsl::uri.eq_any(delete_rows)))
-        .execute(conn)
-        .expect("Error deleting post records");
+    diesel::delete(
+        crate::schema::post::dsl::post.filter(crate::schema::post::dsl::uri.eq_any(delete_rows)),
+    )
+    .execute(conn)
+    .expect("Error deleting post records");
+}
+
+pub fn delete_posts_by_rkey(delete_rows: Vec<String>, conn: &mut PgConnection) {
+    diesel::delete(
+        crate::schema::post::dsl::post.filter(crate::schema::post::dsl::uri.eq_any(delete_rows)),
+    )
+    .execute(conn)
+    .expect("Error deleting post records");
 }
 
 pub fn delete_reposts_by_uri(delete_rows: Vec<String>, conn: &mut PgConnection) {
-    diesel::delete(crate::schema::repost::dsl::repost.filter(crate::schema::repost::dsl::uri.eq_any(delete_rows)))
-        .execute(conn)
-        .expect("Error deleting repost records");
+    diesel::delete(
+        crate::schema::repost::dsl::repost
+            .filter(crate::schema::repost::dsl::uri.eq_any(delete_rows)),
+    )
+    .execute(conn)
+    .expect("Error deleting repost records");
 }
 
 pub fn delete_follows_by_uri(delete_rows: Vec<String>, conn: &mut PgConnection) {
-    diesel::delete(crate::schema::follow::dsl::follow.filter(crate::schema::follow::dsl::uri.eq_any(delete_rows)))
-        .execute(conn)
-        .expect("Error deleting follow records");
+    diesel::delete(
+        crate::schema::follow::dsl::follow
+            .filter(crate::schema::follow::dsl::uri.eq_any(delete_rows)),
+    )
+    .execute(conn)
+    .expect("Error deleting follow records");
 }
 
 pub fn delete_likes_by_uri(delete_rows: Vec<String>, conn: &mut PgConnection) {
-    diesel::delete(crate::schema::like::dsl::like.filter(crate::schema::like::dsl::uri.eq_any(delete_rows)))
-        .execute(conn)
-        .expect("Error deleting like records");
+    diesel::delete(
+        crate::schema::like::dsl::like.filter(crate::schema::like::dsl::uri.eq_any(delete_rows)),
+    )
+    .execute(conn)
+    .expect("Error deleting like records");
 }
 
 pub struct CursorUpdateState {
@@ -260,7 +368,10 @@ pub struct CursorUpdateState {
 pub fn update_cursor_db(update_state: CursorUpdateState, conn: &mut PgConnection) {
     use crate::schema::sub_state::dsl::*;
 
-    let new_update_state = (service.eq(update_state.service), cursor.eq(update_state.cursor));
+    let new_update_state = (
+        service.eq(update_state.service),
+        cursor.eq(update_state.cursor),
+    );
 
     diesel::insert_into(sub_state)
         .values(&new_update_state)

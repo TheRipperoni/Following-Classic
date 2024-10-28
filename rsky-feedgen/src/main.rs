@@ -11,7 +11,9 @@ use rocket::http::Status;
 use rocket::response::status;
 use rocket::serde::json::Json;
 use rocket::{Request, Response};
-use rsky_feedgen::models::{AlgoResponse, FollowingPreference, JwtParts, PostResult, UserFeedPreference};
+use rsky_feedgen::models::{
+    AlgoResponse, FollowingPreference, JwtParts, PostResult, UserFeedPreference,
+};
 use rsky_feedgen::{ReadReplicaConn, WriteDbConn};
 use std::env;
 
@@ -20,6 +22,7 @@ pub struct CORS;
 use rocket::request::{FromRequest, Outcome};
 use serde_derive::{Deserialize, Serialize};
 
+#[derive(Debug)]
 #[allow(dead_code)]
 struct ApiKey<'r>(&'r str);
 
@@ -64,6 +67,7 @@ impl<'r> FromRequest<'r> for ApiKey<'r> {
 impl<'r> FromRequest<'r> for AccessToken {
     type Error = AccessTokenError;
 
+    #[tracing::instrument]
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         match req.headers().get_one("Authorization") {
             None => Outcome::Error((Status::Unauthorized, AccessTokenError::Missing)),
@@ -71,6 +75,7 @@ impl<'r> FromRequest<'r> for AccessToken {
                 Outcome::Error((Status::Unauthorized, AccessTokenError::Invalid))
             }
             Some(token) => {
+                tracing::info!(%token, "Visited by");
                 println!("Visited by {token:?}");
                 let service_did = env::var("FEEDGEN_SERVICE_DID").unwrap_or("".into());
                 let jwt = token.split(" ").map(String::from).collect::<Vec<_>>();
@@ -78,7 +83,7 @@ impl<'r> FromRequest<'r> for AccessToken {
                     match rsky_feedgen::auth::verify_jwt(&jwtstr, &service_did) {
                         Ok(jwt_object) => Outcome::Success(AccessToken(jwt_object)),
                         Err(error) => {
-                            eprintln!("Error decoding jwt. {error:?}");
+                            tracing::error!("Error decoding jwt. {error:?}");
                             Outcome::Error((Status::Unauthorized, AccessTokenError::Invalid))
                         }
                     }
@@ -94,7 +99,9 @@ const FOLLOWING_TRAD: &str =
     "at://did:plc:khvyd3oiw46vif5gm7hijslk/app.bsky.feed.generator/following-trad";
 const FOLLOWING_CLASSIC: &str =
     "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.generator/follow-orig";
+const MEDIA: &str = "at://did:plc:nffcjkyymm3pzutbxobso2pa/app.bsky.feed.generator/media";
 
+#[tracing::instrument(skip(connection))]
 #[get(
     "/xrpc/app.bsky.feed.getFeedSkeleton?<feed>&<limit>&<cursor>",
     format = "json"
@@ -106,7 +113,7 @@ async fn index(
     connection: ReadReplicaConn,
     _token: Result<AccessToken, AccessTokenError>,
 ) -> Result<
-    Json<rsky_feedgen::models::AlgoResponse>,
+    Json<AlgoResponse>,
     status::Custom<Json<rsky_feedgen::models::InternalErrorMessageResponse>>,
 > {
     let mut did = String::from("did:plc:khvyd3oiw46vif5gm7hijslk");
@@ -117,16 +124,18 @@ async fn index(
                 did = jwt_obj.iss;
                 match rsky_feedgen::apis::add_visitor(did.clone(), jwt_obj.aud, feed.to_string()) {
                     Ok(_) => (),
-                    Err(_) => eprintln!("Failed to write visitor."),
+                    Err(_) => tracing::error!("Failed to write visitor"),
                 }
             }
-            Err(_) => eprintln!("Failed to parse jwt string."),
+            Err(e) => {
+                tracing::error!(%e, "Failed to parse jwt string")
+            }
         }
     } else {
         let service_did = env::var("FEEDGEN_SERVICE_DID").unwrap_or("".into());
         match rsky_feedgen::apis::add_visitor("anonymous".into(), service_did, feed.to_string()) {
             Ok(_) => (),
-            Err(_) => eprintln!("Failed to write anonymous visitor."),
+            Err(_) => tracing::error!("Failed to write anonymous visitor"),
         }
     }
     match feed {
@@ -139,14 +148,12 @@ async fn index(
                 return Err(status::Custom(
                     Status::InternalServerError,
                     Json(internal_error),
-                ))
+                ));
             }
-            match rsky_feedgen::apis::get_posts_by_user_feed(did, limit, cursor, connection)
-            .await
-            {
+            match rsky_feedgen::apis::get_posts_by_user_feed(did, limit, cursor, connection).await {
                 Ok(response) => Ok(Json(response)),
                 Err(error) => {
-                    eprintln!("Internal Error: {error}");
+                    tracing::error!("Internal Error: {error}");
                     let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
                         code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
                         message: Some(error.to_string()),
@@ -160,13 +167,44 @@ async fn index(
         }
         _following_trad if FOLLOWING_TRAD == _following_trad => {
             let mut post_results = Vec::new();
-            let post_result = PostResult { post: String::from("at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3l4pi6irzsg2m"), reason: None };
+            let post_result = PostResult {
+                post: String::from(
+                    "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3l4pi6irzsg2m",
+                ),
+                reason: None,
+            };
             post_results.push(post_result);
             let response = AlgoResponse {
                 cursor: Some(String::from("none")),
                 feed: post_results,
             };
             Ok(Json(response))
+        }
+        _following_media if MEDIA == _following_media => {
+            if did == "" {
+                let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
+                    code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
+                    message: Some("No DID".to_string()),
+                };
+                return Err(status::Custom(
+                    Status::InternalServerError,
+                    Json(internal_error),
+                ));
+            }
+            match rsky_feedgen::apis::get_posts_by_following_media(did, limit, cursor, connection).await {
+                Ok(response) => Ok(Json(response)),
+                Err(error) => {
+                    tracing::error!("Internal Error: {error}");
+                    let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
+                        code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
+                        message: Some(error.to_string()),
+                    };
+                    Err(status::Custom(
+                        Status::InternalServerError,
+                        Json(internal_error),
+                    ))
+                }
+            }
         }
         _ => {
             let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
@@ -181,6 +219,7 @@ async fn index(
     }
 }
 
+#[tracing::instrument(skip(connection))]
 #[put("/cursor?<service>&<sequence>")]
 async fn update_cursor(
     service: &str,
@@ -191,7 +230,7 @@ async fn update_cursor(
     match rsky_feedgen::apis::update_cursor(service.to_string(), sequence, connection).await {
         Ok(_) => Ok(()),
         Err(error) => {
-            eprintln!("Internal Error: {error}");
+            tracing::error!("Internal Error: {error}");
             let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
                 code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
                 message: Some(error.to_string()),
@@ -204,6 +243,7 @@ async fn update_cursor(
     }
 }
 
+#[tracing::instrument(skip(connection))]
 #[get("/cursor?<service>", format = "json")]
 async fn get_cursor(
     service: &str,
@@ -216,7 +256,7 @@ async fn get_cursor(
     match rsky_feedgen::apis::get_cursor(service.to_string(), connection).await {
         Ok(response) => Ok(Json(response)),
         Err(error) => {
-            eprintln!("Internal Error: {error}");
+            tracing::error!("Internal Error: {error}");
             let path_error = rsky_feedgen::models::PathUnknownErrorMessageResponse {
                 code: Some(rsky_feedgen::models::NotFoundErrorCode::NotFoundError),
                 message: Some("Not Found".to_string()),
@@ -226,6 +266,7 @@ async fn get_cursor(
     }
 }
 
+#[tracing::instrument(skip(connection))]
 #[put("/queue/<lex>/create", format = "json", data = "<body>")]
 async fn queue_creation(
     lex: &str,
@@ -236,7 +277,7 @@ async fn queue_creation(
     match rsky_feedgen::apis::queue_creation(lex.to_string(), body.into_inner(), connection).await {
         Ok(_) => Ok(()),
         Err(error) => {
-            eprintln!("Internal Error: {error}");
+            tracing::error!("Internal Error: {error}");
             let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
                 code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
                 message: Some(error.to_string()),
@@ -254,7 +295,10 @@ async fn user_config(
     did: &str,
     _key: ApiKey<'_>,
     connection: WriteDbConn,
-) -> Result<Json<Vec<UserFeedPreference>>, status::Custom<Json<rsky_feedgen::models::InternalErrorMessageResponse>>> {
+) -> Result<
+    Json<Vec<UserFeedPreference>>,
+    status::Custom<Json<rsky_feedgen::models::InternalErrorMessageResponse>>,
+> {
     let result = rsky_feedgen::db::user_config_fetch(String::from(did), connection).await;
     Ok(Json::from(result))
 }
@@ -262,14 +306,17 @@ async fn user_config(
 #[derive(Debug, Serialize, Deserialize)]
 struct FollowingPrefFetchResponse {
     pub did: String,
-    pub following_preferences: Vec<FollowingPreference>
+    pub following_preferences: Vec<FollowingPreference>,
 }
 
 #[get("/following_preferences?<did>", format = "json")]
 async fn following_preferences_fetch(
     did: &str,
     connection: WriteDbConn,
-) -> Result<Json<FollowingPrefFetchResponse>, status::Custom<Json<rsky_feedgen::models::InternalErrorMessageResponse>>> {
+) -> Result<
+    Json<FollowingPrefFetchResponse>,
+    status::Custom<Json<rsky_feedgen::models::InternalErrorMessageResponse>>,
+> {
     let result = rsky_feedgen::db::following_pref_fetch(String::from(did), connection).await;
     let response = FollowingPrefFetchResponse {
         did: String::from(did),
@@ -278,6 +325,7 @@ async fn following_preferences_fetch(
     Ok(Json::from(response))
 }
 
+#[tracing::instrument(skip(connection))]
 #[put("/following_preferences", format = "json", data = "<body>")]
 async fn following_preferences_update(
     body: Json<FollowingPreference>,
@@ -286,7 +334,7 @@ async fn following_preferences_update(
     match rsky_feedgen::db::following_pref_update(body.into_inner(), connection).await {
         Ok(_) => Ok(()),
         Err(error) => {
-            eprintln!("Internal Error: {error}");
+            tracing::error!("Internal Error: {error}");
             let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
                 code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
                 message: Some(error.to_string()),
@@ -299,6 +347,7 @@ async fn following_preferences_update(
     }
 }
 
+#[tracing::instrument(skip(connection))]
 #[put("/user_feed_preference", format = "json", data = "<body>")]
 async fn update_user_config(
     body: Json<UserFeedPreference>,
@@ -308,7 +357,7 @@ async fn update_user_config(
     match rsky_feedgen::db::user_config_creation(body.into_inner(), connection).await {
         Ok(_) => Ok(()),
         Err(error) => {
-            eprintln!("Internal Error: {error}");
+            tracing::error!("Internal Error: {error}");
             let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
                 code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
                 message: Some(error.to_string()),
@@ -321,6 +370,7 @@ async fn update_user_config(
     }
 }
 
+#[tracing::instrument(skip(connection))]
 #[put("/queue/<lex>/delete", format = "json", data = "<body>")]
 async fn queue_deletion(
     lex: &str,
@@ -331,7 +381,7 @@ async fn queue_deletion(
     match rsky_feedgen::apis::queue_deletion(lex.to_string(), body.into_inner(), connection).await {
         Ok(_) => Ok(()),
         Err(error) => {
-            eprintln!("Internal Error: {error}");
+            tracing::error!("Internal Error: {error}");
             let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
                 code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
                 message: Some(error.to_string()),
@@ -462,16 +512,27 @@ fn rocket() -> _ {
 
     let write_database_url = env::var("DATABASE_URL").unwrap_or("".into());
     let read_database_url = env::var("READ_REPLICA_URL").unwrap_or("".into());
+    let write_pool_size: u32 = env::var("WRITE_POOL_SIZE")
+        .unwrap_or(40.to_string())
+        .parse()
+        .unwrap();
+    let read_pool_size: u32 = env::var("READ_POOL_SIZE")
+        .unwrap_or(40.to_string())
+        .parse()
+        .unwrap();
+
+    let subscriber = tracing_subscriber::FmtSubscriber::new();
+    tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let write_db: Map<_, Value> = map! {
         "url" => write_database_url.into(),
-        "pool_size" => 20.into(),
+        "pool_size" => write_pool_size.into(),
         "timeout" => 30.into(),
     };
 
     let read_db: Map<_, Value> = map! {
         "url" => read_database_url.into(),
-        "pool_size" => 20.into(),
+        "pool_size" => read_pool_size.into(),
         "timeout" => 30.into(),
     };
 

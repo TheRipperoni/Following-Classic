@@ -1,11 +1,12 @@
-use std::str::FromStr;
-use bsky_sdk::BskyAgent;
 use crate::models::Follow;
 use bsky_sdk::api::com::atproto::repo::list_records::Record;
 use bsky_sdk::api::types::string::{AtIdentifier, Nsid};
 use bsky_sdk::api::types::Unknown;
+use bsky_sdk::BskyAgent;
 use ipld_core::ipld::Ipld;
+use std::str::FromStr;
 
+#[tracing::instrument(skip(agent))]
 pub async fn get_follows(agent: &BskyAgent, did: &str) -> Vec<Follow> {
     use bsky_sdk::api::com::atproto::repo::list_records::{Parameters, ParametersData};
     let mut records: Vec<Record> = Vec::new();
@@ -31,12 +32,12 @@ pub async fn get_follows(agent: &BskyAgent, did: &str) -> Vec<Follow> {
         })
         .await
     {
-        Ok(mut res) => {
+        Ok(res) => {
             cursor = res.cursor.clone();
             records = res.records.clone();
         }
         Err(e) => {
-            eprintln!(
+            tracing::error!(
                 "{}",
                 format!(
                     "Error calling get following records: {x}",
@@ -71,7 +72,7 @@ pub async fn get_follows(agent: &BskyAgent, did: &str) -> Vec<Follow> {
                 records.append(&mut res.records);
             }
             Err(e) => {
-                eprintln!(
+                tracing::error!(
                     "{}",
                     format!(
                         "Error calling get following records: {x}",
@@ -129,7 +130,7 @@ pub async fn get_follows(agent: &BskyAgent, did: &str) -> Vec<Follow> {
                 }
             }
             Unknown::Null => {}
-            Unknown::Other(oth) => {}
+            Unknown::Other(_) => {}
         }
     }
     follows
