@@ -87,7 +87,7 @@ async fn process(message: String, client: &reqwest::Client) {
     let default_subscriber_path = env::var("FEEDGEN_SUBSCRIPTION_ENDPOINT")
         .unwrap_or("wss://jetstream1.us-west.bsky.network".into());
 
-    match rsky_jetstream::jetstream::read(&message) {
+    match read(&message) {
         Ok(body) => {
             let mut posts_to_delete = Vec::new();
             let mut posts_to_create = Vec::new();
@@ -297,15 +297,13 @@ async fn main() {
     let default_subscriber_path = env::var("FEEDGEN_SUBSCRIPTION_ENDPOINT")
         .unwrap_or("wss://jetstream1.us-west.bsky.network".into());
     let wanted_collections = env::var("WANTED_COLLECTIONS")
-        .unwrap_or("".into());
-    let wanted_dids = env::var("WANTED_DIDS")
-        .unwrap_or("".into());
+        .unwrap_or("wantedCollections=app.bsky.feed.post&wantedCollections=app.bsky.feed.repost&wantedCollections=app.bsky.graph.follow".into());
     let client = reqwest::Client::new();
     let subscriber = tracing_subscriber::FmtSubscriber::new();
     tracing::subscriber::set_global_default(subscriber).unwrap();
     loop {
         match tokio_tungstenite::connect_async(
-            Url::parse(format!("{}/subscribe?wantedCollections=app.bsky.feed.post&wantedCollections=app.bsky.feed.repost&wantedCollections=app.bsky.feed.like&wantedCollections=app.bsky.graph.follow", default_subscriber_path).as_str()).unwrap(),
+            Url::parse(format!("{sub}/subscribe?{filter}", sub=default_subscriber_path, filter=wanted_collections).as_str()).unwrap(),
         ).await {
             Ok((mut socket, _response)) => {
                 tracing::info!("Connected to {default_subscriber_path:?}.");
