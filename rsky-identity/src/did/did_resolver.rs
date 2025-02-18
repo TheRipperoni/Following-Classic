@@ -39,7 +39,7 @@ impl DidResolver {
         let mut methods = BTreeMap::new();
         methods.insert(
             "plc".to_string(),
-            ResolverKind::Plc(DidPlcResolver::new(plc_url, timeout.clone(), None)),
+            ResolverKind::Plc(DidPlcResolver::new(plc_url, timeout, None)),
         );
         methods.insert(
             "web".to_string(),
@@ -79,10 +79,10 @@ impl DidResolver {
         }
     }
 
-    pub async fn resolve_no_cache(&self, did: &String) -> Result<Option<DidDocument>> {
-        match self.resolve_no_check(did.clone()).await? {
+    pub async fn resolve_no_cache(&self, did: &str) -> Result<Option<DidDocument>> {
+        match self.resolve_no_check(did.to_owned()).await? {
             None => Ok(None),
-            Some(got) => Ok(Some(self.validate_did_doc(did.clone(), got)?)),
+            Some(got) => Ok(Some(self.validate_did_doc(did.to_owned(), got)?)),
         }
     }
 

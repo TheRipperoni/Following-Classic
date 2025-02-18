@@ -2,7 +2,7 @@
 #[serde(tag = "$type")]
 pub enum Lexicon {
     #[serde(rename(deserialize = "app.bsky.feed.post", serialize = "app.bsky.feed.post"))]
-    AppBskyFeedPost(rsky_lexicon::app::bsky::feed::Post),
+    AppBskyFeedPost(Box<rsky_lexicon::app::bsky::feed::Post>),
     #[serde(rename(
         deserialize = "app.bsky.feed.repost",
         serialize = "app.bsky.feed.repost"

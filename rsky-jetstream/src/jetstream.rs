@@ -53,7 +53,7 @@ pub struct JetstreamRepoCommit {
 #[serde(tag = "$type")]
 pub enum Lexicon {
     #[serde(rename(deserialize = "app.bsky.feed.post"))]
-    AppBskyFeedPost(Post),
+    AppBskyFeedPost(Box<Post>),
     #[serde(rename(deserialize = "app.bsky.feed.repost"))]
     AppBskyFeedRepost(Repost),
     #[serde(rename(deserialize = "app.bsky.feed.like"))]
@@ -86,13 +86,13 @@ pub struct JetstreamRepoAccount {
 
 #[derive(Debug)]
 pub enum JetstreamRepoMessage {
-    Commit(JetstreamRepoCommitMessage),
+    Commit(Box<JetstreamRepoCommitMessage>),
     Identity(JetstreamRepoIdentityMessage),
     Account(JetstreamRepoAccountMessage),
 }
 
 pub fn read(data: &str) -> Result<JetstreamRepoMessage> {
-    let data_json: serde_json::Value = serde_json::from_str(&data)?;
+    let data_json: serde_json::Value = serde_json::from_str(data)?;
 
     let binding = data_json.clone();
     let kind = binding["kind"].as_str().unwrap();

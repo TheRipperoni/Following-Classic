@@ -151,7 +151,7 @@ where
     String: FromSql<diesel::dsl::SqlTypeOf<post::uri>, DB>,
     Option<String>: FromSql<diesel::dsl::SqlTypeOf<post::replyParent>, DB>,
     Option<i64>: FromSql<diesel::dsl::SqlTypeOf<post::sequence>, DB>,
-    bool: FromSql<diesel::sql_types::Bool, DB>
+    bool: FromSql<diesel::sql_types::Bool, DB>,
 {
     fn build<'a>(row: &impl NamedRow<'a, DB>) -> deserialize::Result<Self> {
         let uri = NamedRow::get::<diesel::dsl::SqlTypeOf<post::uri>, _>(row, "uri")?;
@@ -182,10 +182,8 @@ where
             NamedRow::get::<diesel::dsl::SqlTypeOf<post::quoteCid>, _>(row, "quoteCid")?;
         let quote_uri =
             NamedRow::get::<diesel::dsl::SqlTypeOf<post::quoteUri>, _>(row, "quoteUri")?;
-        let media =
-            NamedRow::get::<diesel::dsl::SqlTypeOf<post::media>, _>(row, "media")?;
-        let alt =
-            NamedRow::get::<diesel::dsl::SqlTypeOf<post::alt>, _>(row, "alt")?;
+        let media = NamedRow::get::<diesel::dsl::SqlTypeOf<post::media>, _>(row, "media")?;
+        let alt = NamedRow::get::<diesel::dsl::SqlTypeOf<post::alt>, _>(row, "alt")?;
         Ok(Self {
             uri,
             cid,

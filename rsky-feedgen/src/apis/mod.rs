@@ -26,14 +26,15 @@ const NUMBER_OF_LIKES: &str =
 const RESET_PREF: &str = "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3l5g74kd7my26";
 const HIDE_SEEN_POSTS: &str =
     "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3l7edu2ufdp2u";
-const HIDE_NOT_ALT_TEXT_POSTS: &str = "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3lbsxswsgus2f";
+const HIDE_NOT_ALT_TEXT_POSTS: &str =
+    "at://did:plc:cimwguwdlh2i2mebdqczgcyl/app.bsky.feed.post/3lbsxswsgus2f";
 const USER_PREF_OPTIONS: [&str; 6] = [
     RESET_PREF,
     DONT_SHOW_QUOTEPOSTS,
     DONT_SHOW_REPOSTS,
     SHOW_REPLIES_FOR_FOLLOWING_ONLY,
     HIDE_SEEN_POSTS,
-    HIDE_NOT_ALT_TEXT_POSTS
+    HIDE_NOT_ALT_TEXT_POSTS,
 ];
 
 fn update_seen_posts(did: &str, conn: &mut PgConnection) {
@@ -49,11 +50,9 @@ fn update_seen_posts(did: &str, conn: &mut PgConnection) {
     invalidate_fetched_posts(did, uri_list, conn);
 }
 
-fn post_media_query_str(
-    following: &str,
-) -> String {
-        format!(
-            "select uri,
+fn post_media_query_str(following: &str) -> String {
+    format!(
+        "select uri,
        \"indexedAt\",
        cid,
        \"replyParent\",
@@ -94,8 +93,8 @@ p1.\"alt\"
         and (p1.media is true)
       group by p1.uri, p1.cid, p1.author) as x
 where true=true",
-            authors = following,
-        )
+        authors = following,
+    )
 }
 
 fn post_query_str(
@@ -221,8 +220,6 @@ where (\"replyParent\" is null or likeCount >= {like_threshold})",
     }
 }
 
-
-
 fn repost_query_str(hide_seen_posts: bool, following_reposts_string: &str, did: &str) -> String {
     if hide_seen_posts {
         format!(
@@ -256,7 +253,7 @@ from (select r1.uri as uri,
           LEFT OUTER JOIN seen_post s1 ON s1.did = '{did}' and s1.uri = r1.uri
       where r1.author in ({authors}) and s1.id is null) as x",
             authors = following_reposts_string,
-            did = did.clone()
+            did = did
         )
     } else {
         format!(
@@ -309,7 +306,7 @@ pub async fn get_posts_by_user_feed(
     let mut following = String::from("");
 
     let mut follow_dids = get_saved_follows(did.clone(), &connection).await;
-    if follow_dids.len() == 0 {
+    if follow_dids.is_empty() {
         tracing::info!("Creating followers for {}", did);
         let agent = get_agent().await.unwrap();
         let follows = get_follows(&agent, did.clone().as_ref()).await;
@@ -321,7 +318,7 @@ pub async fn get_posts_by_user_feed(
         follow_dids = get_saved_follows(did.clone(), &connection).await;
     }
 
-    if follow_dids.len() == 0 {
+    if follow_dids.is_empty() {
         return Ok(AlgoResponse {
             cursor: None,
             feed: Vec::new(),
@@ -558,9 +555,7 @@ pub async fn get_posts_by_following_media(
 
     let result = connection
         .run(move |conn| {
-            let mut query_str: String = post_media_query_str(
-                following.as_str(),
-            );
+            let mut query_str: String = post_media_query_str(following.as_str());
 
             if params_cursor.is_some() {
                 let cursor_str = params_cursor.unwrap();
@@ -597,7 +592,7 @@ pub async fn get_posts_by_following_media(
             let order_str = format!(" ORDER BY \"indexedAt\" DESC, cid DESC LIMIT {} ", limit);
             let query_str = format!("{}{};", &query_str, &order_str);
 
-            let mut results = sql_query(query_str)
+            let results = sql_query(query_str)
                 .load::<crate::models::Post>(conn)
                 .expect("Error loading post records");
 
@@ -704,7 +699,7 @@ fn queue_post_creation(body: Vec<CreateRequest>, conn: &mut PgConnection) {
                         }
                         Embeds::Video(e) => {
                             post_media_original = true;
-                            post_alt_original =  e.alt;
+                            post_alt_original = e.alt;
                         }
                         Embeds::RecordWithMedia(e) => {}
                         Embeds::External(e) => {
@@ -1045,7 +1040,7 @@ pub async fn update_cursor(
     connection: WriteDbConn,
 ) -> Result<(), String> {
     let new_update_state = CursorUpdateState {
-        service: service,
+        service,
         cursor: sequence,
     };
 

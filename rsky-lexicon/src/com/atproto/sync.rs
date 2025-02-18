@@ -142,7 +142,7 @@ pub struct SubscribeReposTombstone {
 
 #[derive(Debug)]
 pub enum SubscribeRepos {
-    Commit(SubscribeReposCommit),
+    Commit(Box<SubscribeReposCommit>),
     Identity(SubscribeReposIdentity),
     Account(SubscribeReposAccount),
     Handle(SubscribeReposHandle),

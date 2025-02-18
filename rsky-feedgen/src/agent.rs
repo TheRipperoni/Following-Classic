@@ -90,7 +90,7 @@ pub async fn get_follows(agent: &BskyAgent, did: &str) -> Vec<Follow> {
                 match obj_type {
                     None => {}
                     Some(x) => {
-                        let follow_field: String = <Ipld as Clone>::clone(&x)
+                        let follow_field: String = <Ipld as Clone>::clone(x)
                             .try_into()
                             .unwrap_or(String::from("no"));
                         if follow_field == "app.bsky.graph.follow" {
@@ -101,7 +101,7 @@ pub async fn get_follows(agent: &BskyAgent, did: &str) -> Vec<Follow> {
                                     panic!()
                                 }
                                 Some(x) => {
-                                    subject = <Ipld as Clone>::clone(&x).try_into().unwrap();
+                                    subject = <Ipld as Clone>::clone(x).try_into().unwrap();
                                 }
                             }
                             match obj.get("createdAt") {
@@ -109,7 +109,7 @@ pub async fn get_follows(agent: &BskyAgent, did: &str) -> Vec<Follow> {
                                     panic!()
                                 }
                                 Some(x) => {
-                                    created_at = <Ipld as Clone>::clone(&x).try_into().unwrap();
+                                    created_at = <Ipld as Clone>::clone(x).try_into().unwrap();
                                 }
                             }
 

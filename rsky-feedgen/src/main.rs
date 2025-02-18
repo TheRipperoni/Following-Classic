@@ -80,7 +80,7 @@ impl<'r> FromRequest<'r> for AccessToken {
                 let service_did = env::var("FEEDGEN_SERVICE_DID").unwrap_or("".into());
                 let jwt = token.split(" ").map(String::from).collect::<Vec<_>>();
                 if let Some(jwtstr) = jwt.last() {
-                    match rsky_feedgen::auth::verify_jwt(&jwtstr, &service_did) {
+                    match rsky_feedgen::auth::verify_jwt(jwtstr, &service_did) {
                         Ok(jwt_object) => Outcome::Success(AccessToken(jwt_object)),
                         Err(error) => {
                             tracing::error!("Error decoding jwt. {error:?}");
@@ -117,7 +117,7 @@ async fn index(
     status::Custom<Json<rsky_feedgen::models::InternalErrorMessageResponse>>,
 > {
     let mut did = String::from("did:plc:khvyd3oiw46vif5gm7hijslk");
-    let feed = feed.unwrap_or("".into());
+    let feed = feed.unwrap_or("");
     if let Ok(jwt) = _token {
         match serde_json::from_str::<JwtParts>(&jwt.0) {
             Ok(jwt_obj) => {
@@ -140,7 +140,7 @@ async fn index(
     }
     match feed {
         _following_classic if FOLLOWING_CLASSIC == _following_classic => {
-            if did == "" {
+            if did.is_empty() {
                 let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
                     code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
                     message: Some("No DID".to_string()),
@@ -181,7 +181,7 @@ async fn index(
             Ok(Json(response))
         }
         _following_media if MEDIA == _following_media => {
-            if did == "" {
+            if did.is_empty() {
                 let internal_error = rsky_feedgen::models::InternalErrorMessageResponse {
                     code: Some(rsky_feedgen::models::InternalErrorCode::InternalError),
                     message: Some("No DID".to_string()),
@@ -191,7 +191,9 @@ async fn index(
                     Json(internal_error),
                 ));
             }
-            match rsky_feedgen::apis::get_posts_by_following_media(did, limit, cursor, connection).await {
+            match rsky_feedgen::apis::get_posts_by_following_media(did, limit, cursor, connection)
+                .await
+            {
                 Ok(response) => Ok(Json(response)),
                 Err(error) => {
                     tracing::error!("Internal Error: {error}");

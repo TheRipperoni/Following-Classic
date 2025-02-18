@@ -23,11 +23,10 @@ impl DidWebResolver {
         let parsed_id: String = did.split(":").collect::<Vec<&str>>()[2..].join(":");
         let parts = parsed_id
             .split(":")
-            .into_iter()
-            .map(|part| decode_uri_component(part))
+            .map(decode_uri_component)
             .collect::<Result<Vec<String>>>()?;
         let path: String;
-        if parts.len() < 1 {
+        if parts.is_empty() {
             bail!(Error::PoorlyFormattedDidError(did))
         } else if parts.len() == 1 {
             path = parts[0].clone() + DOC_PATH;

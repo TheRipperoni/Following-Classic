@@ -121,11 +121,11 @@ pub struct ReplyRef {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum ReplyRefUnion {
     #[serde(rename = "#postView")]
-    PostView(PostView),
+    PostView(Box<PostView>),
     #[serde(rename = "#notFoundPost")]
     NotFoundPost(NotFoundPost),
     #[serde(rename = "#blockedPost")]
-    BlockedPost(BlockedPost),
+    BlockedPost(Box<BlockedPost>),
 }
 
 impl ReplyRefUnion {
@@ -231,7 +231,7 @@ pub enum ThreadViewPostEnum {
     #[serde(rename = "app.bsky.feed.defs#notFoundPost")]
     NotFoundPost(NotFoundPost),
     #[serde(rename = "app.bsky.feed.defs#blockedPost")]
-    BlockedPost(BlockedPost),
+    BlockedPost(Box<BlockedPost>),
 }
 
 ///api.bsky.feed.getPostThread

@@ -1,5 +1,5 @@
 [workspace]
-members = [ "rsky-crypto","rsky-feedgen", "rsky-firehose", "rsky-identity", "rsky-lexicon", "rsky-syntax", "rsky-janitor", "rsky-jetstream"]
+members = [ "rsky-crypto","rsky-feedgen", "rsky-identity", "rsky-lexicon", "rsky-syntax", "rsky-janitor", "rsky-jetstream"]
 resolver = "2"
 
 [workspace.dependencies]

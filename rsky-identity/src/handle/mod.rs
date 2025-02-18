@@ -82,7 +82,7 @@ impl HandleResolver {
     pub async fn resolve_backup_dns(&mut self, handle: &String) -> Result<Option<String>> {
         let backup_ips = self.get_backup_nameserver_ips().await?;
         match backup_ips {
-            Some(backup_ips) if backup_ips.len() >= 1 => {
+            Some(backup_ips) if !backup_ips.is_empty() => {
                 let mut config = ResolverConfig::default();
                 let _ = backup_ips
                     .iter()
@@ -144,8 +144,7 @@ impl HandleResolver {
                             None => vec![],
                             Some(backup_nameserver_ips) => backup_nameserver_ips.clone(),
                         };
-                        backup_nameserver_ips
-                            .append(&mut response.iter().map(|ip| ip).collect::<Vec<IpAddr>>());
+                        backup_nameserver_ips.append(&mut response.iter().collect::<Vec<IpAddr>>());
                         self.backup_nameserver_ips = Some(backup_nameserver_ips);
                     }
                 }

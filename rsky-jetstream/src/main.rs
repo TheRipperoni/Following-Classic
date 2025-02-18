@@ -104,7 +104,7 @@ async fn process(message: String, client: &reqwest::Client) {
                         tracing::info!("Operations empty.");
                     }
                     // update stored cursor every 20 events or so
-                    if (&commit.time_us).rem_euclid(20) == 0 {
+                    if commit.time_us.rem_euclid(20) == 0 {
                         let cursor_endpoint = format!("{}/cursor", default_queue_path);
                         let resp = update_cursor(
                             cursor_endpoint,
@@ -112,10 +112,12 @@ async fn process(message: String, client: &reqwest::Client) {
                             &commit.time_us,
                             client,
                         )
-                            .await;
+                        .await;
                         match resp {
                             Ok(()) => (),
-                            Err(error) => tracing::error!("@LOG: Failed to update cursor: {error:?}"),
+                            Err(error) => {
+                                tracing::error!("@LOG: Failed to update cursor: {error:?}")
+                            }
                         };
                     }
 
@@ -125,7 +127,7 @@ async fn process(message: String, client: &reqwest::Client) {
                             let cid = commit.commit.cid;
                             match commit.commit.record {
                                 Some(Lexicon::AppBskyFeedPost(r)) => {
-                                    let post: Post = r;
+                                    let post: Box<Post> = r;
                                     let uri = String::from("at://")
                                         + commit.did.as_str()
                                         + "/app.bsky.feed.post/"
@@ -190,28 +192,28 @@ async fn process(message: String, client: &reqwest::Client) {
                                     + commit.did.as_str()
                                     + "/app.bsky.feed.post/"
                                     + commit.commit.rkey.as_str();
-                                let del = rsky_jetstream::models::DeleteOp { uri: uri };
+                                let del = rsky_jetstream::models::DeleteOp { uri };
                                 posts_to_delete.push(del);
                             } else if collection == "app.bsky.feed.repost" {
                                 let uri = String::from("at://")
                                     + commit.did.as_str()
                                     + "/app.bsky.feed.repost/"
                                     + commit.commit.rkey.as_str();
-                                let del = rsky_jetstream::models::DeleteOp { uri: uri };
+                                let del = rsky_jetstream::models::DeleteOp { uri };
                                 reposts_to_delete.push(del);
                             } else if collection == "app.bsky.feed.like" {
                                 let uri = String::from("at://")
                                     + commit.did.as_str()
                                     + "/app.bsky.feed.like/"
                                     + commit.commit.rkey.as_str();
-                                let del = rsky_jetstream::models::DeleteOp { uri: uri };
+                                let del = rsky_jetstream::models::DeleteOp { uri };
                                 likes_to_delete.push(del);
                             } else if collection == "app.bsky.graph.follow" {
                                 let uri = String::from("at://")
                                     + commit.did.as_str()
                                     + "/app.bsky.graph.follow/"
                                     + commit.commit.rkey.as_str();
-                                let del = rsky_jetstream::models::DeleteOp { uri: uri };
+                                let del = rsky_jetstream::models::DeleteOp { uri };
                                 follows_to_delete.push(del);
                             }
                         }
@@ -222,7 +224,7 @@ async fn process(message: String, client: &reqwest::Client) {
                 JetstreamRepoMessage::Account(_) => {}
             }
 
-            if posts_to_create.len() > 0 {
+            if !posts_to_create.is_empty() {
                 let queue_endpoint = format!("{}/queue/{}/create", default_queue_path, "posts");
                 let resp = queue_create(queue_endpoint, posts_to_create, client).await;
                 match resp {
@@ -230,7 +232,7 @@ async fn process(message: String, client: &reqwest::Client) {
                     Err(error) => tracing::error!("Records failed to queue: {error:?}"),
                 };
             }
-            if posts_to_delete.len() > 0 {
+            if !posts_to_delete.is_empty() {
                 let queue_endpoint = format!("{}/queue/{}/delete", default_queue_path, "posts");
                 let resp = queue_delete(queue_endpoint, posts_to_delete, client).await;
                 match resp {
@@ -238,7 +240,7 @@ async fn process(message: String, client: &reqwest::Client) {
                     Err(error) => tracing::error!("Records failed to queue: {error:?}"),
                 };
             }
-            if reposts_to_create.len() > 0 {
+            if !reposts_to_create.is_empty() {
                 let queue_endpoint = format!("{}/queue/{}/create", default_queue_path, "reposts");
                 let resp = queue_create(queue_endpoint, reposts_to_create, client).await;
                 match resp {
@@ -246,7 +248,7 @@ async fn process(message: String, client: &reqwest::Client) {
                     Err(error) => tracing::error!("Records failed to queue: {error:?}"),
                 };
             }
-            if reposts_to_delete.len() > 0 {
+            if !reposts_to_delete.is_empty() {
                 let queue_endpoint = format!("{}/queue/{}/delete", default_queue_path, "reposts");
                 let resp = queue_delete(queue_endpoint, reposts_to_delete, client).await;
                 match resp {
@@ -254,7 +256,7 @@ async fn process(message: String, client: &reqwest::Client) {
                     Err(error) => tracing::error!("Records failed to queue: {error:?}"),
                 };
             }
-            if likes_to_create.len() > 0 {
+            if !likes_to_create.is_empty() {
                 let queue_endpoint = format!("{}/queue/{}/create", default_queue_path, "likes");
                 let resp = queue_create(queue_endpoint, likes_to_create, client).await;
                 match resp {
@@ -262,7 +264,7 @@ async fn process(message: String, client: &reqwest::Client) {
                     Err(error) => tracing::error!("Records failed to queue: {error:?}"),
                 };
             }
-            if likes_to_delete.len() > 0 {
+            if !likes_to_delete.is_empty() {
                 let queue_endpoint = format!("{}/queue/{}/delete", default_queue_path, "likes");
                 let resp = queue_delete(queue_endpoint, likes_to_delete, client).await;
                 match resp {
@@ -270,7 +272,7 @@ async fn process(message: String, client: &reqwest::Client) {
                     Err(error) => tracing::error!("Records failed to queue: {error:?}"),
                 };
             }
-            if follows_to_create.len() > 0 {
+            if !follows_to_create.is_empty() {
                 let queue_endpoint = format!("{}/queue/{}/create", default_queue_path, "follows");
                 let resp = queue_create(queue_endpoint, follows_to_create, client).await;
                 match resp {
@@ -278,7 +280,7 @@ async fn process(message: String, client: &reqwest::Client) {
                     Err(error) => tracing::error!("Records failed to queue: {error:?}"),
                 };
             }
-            if follows_to_delete.len() > 0 {
+            if !follows_to_delete.is_empty() {
                 let queue_endpoint = format!("{}/queue/{}/delete", default_queue_path, "follows");
                 let resp = queue_delete(queue_endpoint, follows_to_delete, client).await;
                 match resp {
@@ -287,7 +289,10 @@ async fn process(message: String, client: &reqwest::Client) {
                 };
             }
         }
-        Err(error) => tracing::error!("@LOG: Error unwrapping message and header: {}",error.to_string()),
+        Err(error) => tracing::error!(
+            "@LOG: Error unwrapping message and header: {}",
+            error.to_string()
+        ),
     }
 }
 
@@ -303,8 +308,18 @@ async fn main() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
     loop {
         match tokio_tungstenite::connect_async(
-            Url::parse(format!("{sub}/subscribe?{filter}", sub=default_subscriber_path, filter=wanted_collections).as_str()).unwrap(),
-        ).await {
+            Url::parse(
+                format!(
+                    "{sub}/subscribe?{filter}",
+                    sub = default_subscriber_path,
+                    filter = wanted_collections
+                )
+                .as_str(),
+            )
+            .unwrap(),
+        )
+        .await
+        {
             Ok((mut socket, _response)) => {
                 tracing::info!("Connected to {default_subscriber_path:?}.");
                 while let Some(Ok(Message::Text(message))) = socket.next().await {

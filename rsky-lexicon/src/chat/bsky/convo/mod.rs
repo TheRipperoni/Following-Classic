@@ -58,7 +58,7 @@ pub struct ConvoView {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum MessageViewEnum {
-    MessageView(MessageView),
+    MessageView(Box<MessageView>),
     DeletedMessageView(DeletedMessageView),
 }
 

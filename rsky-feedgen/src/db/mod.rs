@@ -32,7 +32,7 @@ pub fn get_user_config(_did: &str, conn: &mut PgConnection) -> Option<UserFeedPr
         .load(conn)
         .expect("Error querying user feed");
 
-    if result.len() > 0 {
+    if !result.is_empty() {
         Some(result[0].clone())
     } else {
         None
@@ -182,7 +182,7 @@ pub fn user_follows_indexed(did: &str, conn: &mut PgConnection) -> bool {
         .load(conn)
         .expect("Error querying follows");
 
-    follows.len() > 0
+    !follows.is_empty()
 }
 
 pub async fn user_config_creation(
@@ -305,7 +305,7 @@ pub fn insert_follows(follows: Vec<Follow>, conn: &mut PgConnection) {
             FollowSchema::createdAt.eq(follow.created_at.clone()),
             FollowSchema::indexedAt.eq(follow.indexed_at.clone()),
             FollowSchema::prev.eq(follow.prev.clone()),
-            FollowSchema::sequence.eq(follow.sequence.clone()),
+            FollowSchema::sequence.eq(follow.sequence),
         );
         follows_to_insert.push(new_follow);
     }
